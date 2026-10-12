@@ -12,38 +12,33 @@ pipeline {
     environment {
         TF_VAR_FILE = "environments/${params.ENVIRONMENT}.tfvars"
         TF_PLAN_OUT = "tfplan-${params.ENVIRONMENT}"
+        AWS_DEFAULT_REGION = "us-east-1"
     }
 
     stages {
-        stage('Terraform Init') {
+        stage('Terraform Operations') {
             steps {
-                echo "Initializing Terraform..."
-                sh 'terraform init'
-            }
-        }
+                // هنا يتم تفعيل واستخدام الكريدينشالز
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        echo "Initializing Terraform..."
+                        terraform init
 
-        stage('Terraform Workspace Select') {
-            steps {
-                echo "Selecting workspace: ${params.ENVIRONMENT}..."
-                // الأمر ده بيختار الـ workspace ولو مش موجودة بيعملها create
-                sh """
-                    terraform workspace select ${params.ENVIRONMENT} || terraform workspace new ${params.ENVIRONMENT}
-                """
-            }
-        }
+                        echo "Selecting workspace: ${ENVIRONMENT}..."
+                        terraform workspace select ${ENVIRONMENT} || terraform workspace new ${ENVIRONMENT}
 
-        stage('Terraform Plan') {
-            steps {
-                echo "Running Terraform Plan for ${params.ENVIRONMENT}..."
-                sh """
-                    terraform plan -var-file="${TF_VAR_FILE}" -out="${TF_PLAN_OUT}"
-                """
+                        echo "Running Terraform Plan..."
+                        terraform plan -var-file="${TF_VAR_FILE}" -out="${TF_PLAN_OUT}"
+                    '''
+                }
             }
         }
 
         stage('Manual Approval') {
             steps {
-                // هنا البايب لاين هيقف ويستنى قرارك (Approve أو Abort)
                 input(
                     id: 'ProceedWithApply',
                     message: "Review the plan above. Do you want to apply changes to [${params.ENVIRONMENT}]?",
@@ -54,18 +49,22 @@ pipeline {
 
         stage('Terraform Apply') {
             steps {
-                echo "Applying changes to ${params.ENVIRONMENT}..."
-                // بنطبق نفس الـ plan file اللي تم مراجعته عشان نضمن الأمان
-                sh """
-                    terraform apply "${TF_PLAN_OUT}"
-                """
+                // وهنا أيضاً يتم استخدامها لتنفيذ الـ Apply على AWS
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        echo "Applying changes to ${ENVIRONMENT}..."
+                        terraform apply "${TF_PLAN_OUT}"
+                    '''
+                }
             }
         }
     }
 
     post {
         always {
-            // تنظيف ملف الـ plan بعد الانتهاء
             sh "rm -f ${TF_PLAN_OUT}"
         }
         success {
